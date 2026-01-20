@@ -2,6 +2,7 @@
 name = "grpcmcp"
 version = "0.1.0"
 description = "gRPC transport for Model Context Protocol"
+license = { text = "MIT" }
 dependencies = [
     "grpcio>=1.60.0",
     "protobuf>=4.25.0",
