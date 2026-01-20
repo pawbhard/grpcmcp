@@ -1,0 +1,41 @@
+[project]
+name = "grpcmcp"
+version = "0.1.0"
+description = "gRPC transport for Model Context Protocol"
+dependencies = [
+    "grpcio>=1.60.0",
+    "protobuf>=4.25.0",
+    "mcp>=1.2.0",
+    "fastmcp",
+    "grpcio-tools>=1.76.0",
+    "types-protobuf>=6.32.1.20251210",
+]
+requires-python = ">=3.10"
+
+[tool.uv.sources]
+fastmcp = { path = "../fastmcp" }
+
+[build-system]
+requires = ["setuptools>=61.0", "grpcio-tools>=1.60.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+extend-exclude = ["*_pb2.py", "*_pb2_grpc.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = []
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+include = ["src", "tests", "example"]
+exclude = ["**/proto/mcp_pb2.py", "**/proto/mcp_pb2_grpc.py"]
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.408",
+    "ruff>=0.14.13",
+]

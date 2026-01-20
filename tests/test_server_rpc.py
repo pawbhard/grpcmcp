@@ -1,0 +1,149 @@
+import asyncio
+import unittest
+
+import grpc
+from fastmcp import Context, FastMCP
+
+from grpcmcp.proto import mcp_pb2, mcp_pb2_grpc
+from grpcmcp.server import MCPServicer
+
+
+class TestServerRPC(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        # Create a real FastMCP instance with a tool
+        self.fastmcp = FastMCP("TestServer")
+        
+        @self.fastmcp.tool()
+        def add(a: int, b: int) -> int:
+            """Add two numbers"""
+            return a + b
+
+        @self.fastmcp.tool()
+        def echo(message: str) -> str:
+            """Echo back a message"""
+            return "Hello " + message
+
+        @self.fastmcp.tool()
+        async def download_file(filename: str, size_mb: float, ctx: Context) -> str:
+            """Simulate downloading a file with progress updates."""
+            total_bytes = int(size_mb * 1024 * 1024)
+            chunk_size = 64 * 1024
+            downloaded = 0
+
+            while downloaded < total_bytes:
+                await asyncio.sleep(0.01) # Faster for tests
+                
+                downloaded += chunk_size
+                if downloaded > total_bytes:
+                    downloaded = total_bytes
+                
+                progress = downloaded / total_bytes
+                await ctx.report_progress(
+                    progress, total=1.0, message=f"Downloaded {downloaded} bytes"
+                )
+            
+            return f"Successfully downloaded {filename}"
+
+        # Create the servicer
+        self.servicer = MCPServicer(self.fastmcp)
+        
+        # We can test the servicer method directly without a full grpc server explicitly
+        # But to test "RPC" properly we might want a real server-client pair
+        # or just test the servicer method.
+        # Given "RPC" in the request, testing the actual gRPC call via stub is better.
+
+        self.server = grpc.aio.server()
+        mcp_pb2_grpc.add_McpServicer_to_server(self.servicer, self.server)
+        port = self.server.add_insecure_port('localhost:0')
+        await self.server.start()
+        
+        self.channel = grpc.aio.insecure_channel(f'localhost:{port}')
+        self.stub = mcp_pb2_grpc.McpStub(self.channel)
+
+    async def asyncTearDown(self):
+        await self.channel.close()
+        await self.server.stop(None)
+
+    async def test_list_tools(self):
+        request = mcp_pb2.ListToolsRequest()
+        response = await self.stub.ListTools(request)
+        
+        self.assertEqual(len(response.tools), 3)
+        tool_names = [t.name for t in response.tools]
+        self.assertIn("add", tool_names)
+        self.assertIn("echo", tool_names)
+        self.assertIn("download_file", tool_names)
+        
+        # Verify schema for add
+        add_tool = next(t for t in response.tools if t.name == "add")
+        self.assertEqual(add_tool.description, "Add two numbers")
+        self.assertIn("properties", add_tool.input_schema)
+        self.assertIn("a", add_tool.input_schema["properties"])
+        self.assertIn("b", add_tool.input_schema["properties"])
+
+    async def test_call_tool(self):
+        from google.protobuf.struct_pb2 import Struct
+        args = Struct()
+        args.update({"message": "World"})
+        
+        request = mcp_pb2.CallToolRequest(
+            request=mcp_pb2.CallToolRequest.Request(
+                name="echo",
+                arguments=args
+            )
+        )
+        
+        # CallTool returns a stream
+        responses = []
+        async for response in self.stub.CallTool(request):
+            responses.append(response)
+            
+        self.assertTrue(len(responses) > 0)
+        # The last response might be None or just end of stream,
+        # but in python list it collects actual messages
+        # Check content
+        found_content = False
+        for response in responses:
+            if response.content:
+                for content in response.content:
+                    if content.text.text == "Hello World":
+                        found_content = True
+        
+        self.assertTrue(found_content, "Did not find expected response 'Hello World'")
+
+    async def test_call_tool_with_progress(self):
+        from google.protobuf.struct_pb2 import Struct
+        args = Struct()
+        # Small size to make test fast, but enough for a few chunks
+        # 0.2 MB = 204.8 KB. Chunk 64KB. ~4 chunks.
+        args.update({"filename": "test.txt", "size_mb": 0.2})
+        
+        request = mcp_pb2.CallToolRequest(
+            common=mcp_pb2.RequestFields(
+                progress=mcp_pb2.ProgressNotification(progress_token="test-token")
+            ),
+            request=mcp_pb2.CallToolRequest.Request(
+                name="download_file",
+                arguments=args
+            )
+        )
+        
+        responses = []
+        progress_updates = []
+        final_result = None
+        
+        async for response in self.stub.CallTool(request):
+            responses.append(response)
+            if response.common.HasField('progress'):
+                progress_updates.append(response.common.progress)
+            
+            if response.content:
+                for content in response.content:
+                    final_result = content.text.text
+        
+        self.assertTrue(len(progress_updates) > 0, "No progress updates received")
+        self.assertEqual(progress_updates[-1].progress, 1.0)
+        self.assertEqual(final_result, "Successfully downloaded test.txt")
+
+if __name__ == '__main__':
+    unittest.main()
