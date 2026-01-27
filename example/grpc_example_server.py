@@ -1,6 +1,6 @@
 import asyncio
 
-from fastmcp import Context, FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 
 from grpcmcp import serve_grpc
 

@@ -4,17 +4,15 @@ version = "0.1.0"
 description = "gRPC transport for Model Context Protocol"
 license = { text = "MIT" }
 dependencies = [
-    "grpcio>=1.60.0",
+    "grpcio==1.76.0",
     "protobuf>=4.25.0",
-    "mcp>=1.2.0",
-    "fastmcp",
+    "mcp==1.25.0",
     "grpcio-tools>=1.76.0",
     "types-protobuf>=6.32.1.20251210",
+    "pydantic>=2.12.5",
 ]
 requires-python = ">=3.10"
 
-[tool.uv.sources]
-fastmcp = { path = "../fastmcp" }
 
 [build-system]
 requires = ["setuptools>=61.0", "grpcio-tools>=1.60.0"]
@@ -39,4 +37,5 @@ exclude = ["**/proto/mcp_pb2.py", "**/proto/mcp_pb2_grpc.py"]
 dev = [
     "pyright>=1.1.408",
     "ruff>=0.14.13",
+    "pytest>=8.0.0",
 ]
