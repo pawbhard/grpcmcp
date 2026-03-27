@@ -4,7 +4,7 @@ import unittest
 import grpc
 from mcp.server.fastmcp import Context, FastMCP
 
-from grpcmcp.proto import mcp_pb2, mcp_pb2_grpc
+from grpcmcp.proto import mcp_messages_pb2 as mcp_pb2, mcp_pb2_grpc
 from grpcmcp.server import MCPServicer
 
 
@@ -24,27 +24,6 @@ class TestServerRPC(unittest.IsolatedAsyncioTestCase):
             """Echo back a message"""
             return "Hello " + message
 
-        @self.mcp_server.tool(name="download_file")
-        async def download_file(filename: str, size_mb: float, ctx: Context) -> str:
-            """Simulate downloading a file with progress updates."""
-            total_bytes = int(size_mb * 1024 * 1024)
-            chunk_size = 64 * 1024
-            downloaded = 0
-            
-            while downloaded < total_bytes:
-                await asyncio.sleep(0.01) # Faster for tests
-                
-                downloaded += chunk_size
-                if downloaded > total_bytes:
-                    downloaded = total_bytes
-                
-                progress = downloaded / total_bytes
-                
-                await ctx.report_progress(
-                    progress, 1.0, f"Downloaded {downloaded} bytes"
-                )
-                
-            return f"Successfully downloaded {filename}"
 
         # Create the servicer
         self.servicer = MCPServicer(self.mcp_server)
@@ -65,11 +44,10 @@ class TestServerRPC(unittest.IsolatedAsyncioTestCase):
         request = mcp_pb2.ListToolsRequest()
         response = await self.stub.ListTools(request)
         
-        self.assertEqual(len(response.tools), 3)
+        self.assertEqual(len(response.tools), 2)
         tool_names = [t.name for t in response.tools]
         self.assertIn("add", tool_names)
         self.assertIn("echo", tool_names)
-        self.assertIn("download_file", tool_names)
         
         # Verify schema for add
         add_tool = next(t for t in response.tools if t.name == "add")
@@ -101,18 +79,13 @@ class TestServerRPC(unittest.IsolatedAsyncioTestCase):
         )
         
         # CallTool returns a stream
-        responses = []
-        async for response in self.stub.CallTool(request):
-            responses.append(response)
-            
-        self.assertTrue(len(responses) > 0)
-        # Check content
+        response = await self.stub.CallTool(request)
+        
         found_content = False
-        for response in responses:
-            if response.content:
-                for content in response.content:
-                    if content.text.text == "Hello World":
-                        found_content = True
+        if response.content:
+            for content in response.content:
+                if content.text.text == "Hello World":
+                    found_content = True
         
         self.assertTrue(found_content, "Did not find expected response 'Hello World'")
 
@@ -128,56 +101,17 @@ class TestServerRPC(unittest.IsolatedAsyncioTestCase):
             )
         )
         
-        responses = []
-        async for response in self.stub.CallTool(request):
-            responses.append(response)
-            
-        self.assertTrue(len(responses) > 0)
+        response = await self.stub.CallTool(request)
         
         # Check structured_content
         found_result = False
-        for response in responses:
-            if response.HasField("structured_content"):
-                # FastMCP returns {'result': 30} for add(10, 20)
-                if response.structured_content["result"] == 30:
-                    found_result = True
+        if response.HasField("structured_content"):
+            # FastMCP returns {'result': 30} for add(10, 20)
+            if response.structured_content["result"] == 30:
+                found_result = True
         
         self.assertTrue(found_result, "Did not find expected structured result 30")
 
-    async def test_call_tool_with_progress(self):
-        from google.protobuf.struct_pb2 import Struct
-        args = Struct()
-        # Small size to make test fast, but enough for a few chunks
-        # 0.2 MB = 204.8 KB. Chunk 64KB. ~4 chunks.
-        args.update({"filename": "test.txt", "size_mb": 0.2})
-        
-        request = mcp_pb2.CallToolRequest(
-            common=mcp_pb2.RequestFields(
-                progress=mcp_pb2.ProgressNotification(progress_token="test-token")
-            ),
-            request=mcp_pb2.CallToolRequest.Request(
-                name="download_file",
-                arguments=args
-            )
-        )
-        
-        responses = []
-        progress_updates = []
-        final_result = None
-        
-        async for response in self.stub.CallTool(request):
-            responses.append(response)
-            if response.common.HasField('progress'):
-                progress_updates.append(response.common.progress)
-            
-            if response.content:
-                for content in response.content:
-                    final_result = content.text.text
-        
-        self.assertTrue(len(progress_updates) > 0, "No progress updates received")
-        # Final progress check might be aprox 1.0 depending on loop
-        self.assertGreaterEqual(progress_updates[-1].progress, 0.9)
-        self.assertEqual(final_result, "Successfully downloaded test.txt")
 
 if __name__ == '__main__':
     unittest.main()

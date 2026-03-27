@@ -3,7 +3,7 @@
 To regenerate the Python files from `mcp.proto`, run the following command from the project root (`grpcmcp` directory):
 
 ```bash
-uv run python -m grpc_tools.protoc -Isrc --python_out=src --grpc_python_out=src src/grpcmcp/proto/mcp.proto
+uv run python -m grpc_tools.protoc -Isrc/grpcmcp/proto --python_out=src --grpc_python_out=src src/grpcmcp/proto/*.proto
 ```
 
 This will update:
