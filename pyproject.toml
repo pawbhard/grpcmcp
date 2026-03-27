@@ -6,7 +6,7 @@ license = { text = "MIT" }
 dependencies = [
     "grpcio==1.76.0",
     "protobuf>=4.25.0",
-    "mcp==1.25.0",
+    "mcp",
     "grpcio-tools>=1.76.0",
     "types-protobuf>=6.32.1.20251210",
     "pydantic>=2.12.5",
@@ -32,6 +32,9 @@ venvPath = "."
 venv = ".venv"
 include = ["src", "tests", "example"]
 exclude = ["**/proto/mcp_pb2.py", "**/proto/mcp_pb2_grpc.py"]
+
+[tool.uv.sources]
+mcp = { git = "https://github.com/pawbhard/python-sdk.git", branch = "extract-dispatcher-from-base-session" }
 
 [dependency-groups]
 dev = [
