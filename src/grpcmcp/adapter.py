@@ -18,31 +18,6 @@ class GRPCSessionAdapter(ServerSession):
         # stateless/streamless adapter for the purpose of the context.
         self.response_queue = response_queue
 
-    async def send_progress_notification(
-        self,
-        progress_token: str | int,
-        progress: float,
-        total: Optional[float] = None,
-        message: Optional[str] = None,
-        related_request_id: Optional[Any] = None,
-    ) -> None:
-        from .proto import mcp_pb2
-        
-        notification = mcp_pb2.ProgressNotification(
-            progress_token=str(progress_token),
-            progress=progress,
-            total=total if total is not None else 0.0,
-            message=message if message is not None else "",
-        )
-        
-        # In gRPC calling convention for CallTool, progress is part of response fields
-        response = mcp_pb2.CallToolResponse(
-            common=mcp_pb2.ResponseFields(
-                progress=notification
-            )
-        )
-        await self.response_queue.put(response)
-
     async def send_log_message(
         self,
         level: LoggingLevel,
