@@ -1,21 +1,27 @@
 import asyncio
+import logging
+import traceback
 from typing import Any
 
 import anyio
 import grpc
-import mcp.types as types
 from google.protobuf.json_format import MessageToDict, ParseDict
-from google.protobuf.struct_pb2 import Struct
+from google.protobuf.struct_pb2 import Struct  # pylint: disable=no-name-in-module
 from grpc_reflection.v1alpha import reflection
+from mcp import types
 from mcp.server.mcpserver.server import MCPServer
 from mcp.server.session import ServerSession
 from mcp.shared.dispatcher import OnErrorFn, OnNotificationFn, OnRequestFn
 from mcp.shared.exceptions import MCPError
 from mcp.types import ErrorData, RequestId
+from mcp_transport_proto import (
+    mcp_messages_pb2,  # pylint: disable=no-member
+    mcp_pb2,
+    mcp_pb2_grpc,
+)
 
-from mcp_transport_proto import mcp_messages_pb2 as mcp_pb2
-from mcp_transport_proto import mcp_pb2 as mcp_service_pb2
-from mcp_transport_proto import mcp_pb2_grpc
+
+logger = logging.getLogger(__name__)
 
 
 class GRPCDispatcher(mcp_pb2_grpc.McpServicer):
@@ -56,7 +62,9 @@ class GRPCDispatcher(mcp_pb2_grpc.McpServicer):
         metadata: Any = None,
         timeout: float | None = None,
     ) -> dict[str, Any]:
-        raise NotImplementedError("GRPCDispatcher does not initiate server-to-client requests")
+        raise NotImplementedError(
+            "GRPCDispatcher does not initiate server-to-client requests"
+        )
 
     async def send_notification(
         self,
@@ -78,22 +86,31 @@ class GRPCDispatcher(mcp_pb2_grpc.McpServicer):
 
     async def _dispatch(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         """Route an MCP request through the session and await its response."""
-        assert self._on_request is not None, "Session not started; call set_handlers first"
+        assert self._on_request is not None, (
+            "Session not started; call set_handlers first"
+        )
         self._counter += 1
         request_id = self._counter
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         future: asyncio.Future[dict[str, Any] | ErrorData] = loop.create_future()
         self._pending[request_id] = future
-        payload = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
+        payload = {
+            "jsonrpc": "2.0", "id": request_id, "method": method, "params": params
+        }
         await self._on_request(request_id, payload, None)
-        result = await future
+        try:
+            result = await future
+        except asyncio.CancelledError:
+            self._pending.pop(request_id, None)
+            raise
         if isinstance(result, ErrorData):
             raise MCPError(result.code, result.message, result.data)
         return result  # type: ignore[return-value]
 
     # --- gRPC servicer ---
 
-    async def ListTools(self, request, context):
+    async def ListTools(self, request, _context):  # pylint: disable=invalid-overridden-method
+        logger.info("ListTools request received")
         try:
             result_dict = await self._dispatch("tools/list", {})
             list_result = types.ListToolsResult.model_validate(result_dict)
@@ -118,17 +135,18 @@ class GRPCDispatcher(mcp_pb2_grpc.McpServicer):
                 if output_schema:
                     tool_kwargs["output_schema"] = output_schema
 
-                proto_tools.append(mcp_pb2.Tool(**tool_kwargs))
+                proto_tools.append(mcp_messages_pb2.Tool(**tool_kwargs))
 
-            return mcp_pb2.ListToolsResponse(tools=proto_tools)
-        except Exception:
-            import traceback
+            logger.info("ListTools returning %d tool(s)", len(proto_tools))
+            return mcp_messages_pb2.ListToolsResponse(tools=proto_tools)
+        except Exception:  # pylint: disable=broad-exception-caught
             traceback.print_exc()
             raise
 
-    async def CallTool(self, request, context):
+    async def CallTool(self, request, _context):  # pylint: disable=invalid-overridden-method
         tool_name = request.request.name
         arguments = MessageToDict(request.request.arguments)
+        logger.info("CallTool request: tool=%r arguments=%r", tool_name, arguments)
         try:
             result_dict = await self._dispatch(
                 "tools/call", {"name": tool_name, "arguments": arguments}
@@ -138,12 +156,19 @@ class GRPCDispatcher(mcp_pb2_grpc.McpServicer):
             proto_contents = []
             for content in call_result.content:
                 if isinstance(content, types.TextContent):
-                    proto_contents.append(mcp_pb2.CallToolResponse.Content(
-                        text=mcp_pb2.TextContent(text=content.text)
+                    proto_contents.append(mcp_messages_pb2.CallToolResponse.Content(
+                        text=mcp_messages_pb2.TextContent(text=content.text)
                     ))
                 elif isinstance(content, types.ImageContent):
-                    proto_contents.append(mcp_pb2.CallToolResponse.Content(
-                        image=mcp_pb2.ImageContent(
+                    proto_contents.append(mcp_messages_pb2.CallToolResponse.Content(
+                        image=mcp_messages_pb2.ImageContent(
+                            data=content.data,
+                            mime_type=content.mimeType,
+                        )
+                    ))
+                elif isinstance(content, types.AudioContent):
+                    proto_contents.append(mcp_messages_pb2.CallToolResponse.Content(
+                        audio=mcp_messages_pb2.AudioContent(
                             data=content.data,
                             mime_type=content.mimeType,
                         )
@@ -154,17 +179,18 @@ class GRPCDispatcher(mcp_pb2_grpc.McpServicer):
                 structured_content = Struct()
                 ParseDict(call_result.structured_content, structured_content)
 
-            return mcp_pb2.CallToolResponse(
+            logger.info("CallTool %r completed is_error=%s", tool_name, call_result.is_error or False)
+            return mcp_messages_pb2.CallToolResponse(
                 content=proto_contents,
                 structured_content=structured_content,
                 is_error=call_result.is_error or False,
             )
-        except Exception as e:
-            import traceback
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("CallTool %r raised %s: %s", tool_name, type(e).__name__, e)
             traceback.print_exc()
-            return mcp_pb2.CallToolResponse(
-                content=[mcp_pb2.CallToolResponse.Content(
-                    text=mcp_pb2.TextContent(text=str(e))
+            return mcp_messages_pb2.CallToolResponse(
+                content=[mcp_messages_pb2.CallToolResponse.Content(
+                    text=mcp_messages_pb2.TextContent(text=str(e))
                 )],
                 is_error=True,
             )
@@ -176,7 +202,7 @@ async def serve_grpc(
     port: int = 50051,
     enable_reflection: bool = False,
 ) -> None:
-    lowlevel = server._lowlevel_server  # type: ignore[attr-defined]
+    lowlevel = server._lowlevel_server  # type: ignore[attr-defined]  # pylint: disable=protected-access
     dispatcher = GRPCDispatcher()
     init_options = lowlevel.create_initialization_options()
 
@@ -193,18 +219,23 @@ async def serve_grpc(
             grpc_server = grpc.aio.server()
             mcp_pb2_grpc.add_McpServicer_to_server(dispatcher, grpc_server)
             if enable_reflection:
-                service_name = mcp_service_pb2.DESCRIPTOR.services_by_name["Mcp"].full_name
-                reflection.enable_server_reflection([service_name, reflection.SERVICE_NAME], grpc_server)
-            listen_addr = f"[::]:{port}"
+                service_name = (
+                    mcp_pb2.DESCRIPTOR.services_by_name["Mcp"].full_name
+                )
+                reflection.enable_server_reflection(
+                    [service_name, reflection.SERVICE_NAME], grpc_server
+                )
+            listen_addr = f"{host}:{port}"
             grpc_server.add_insecure_port(listen_addr)
-            print(f"Starting gRPC server on {listen_addr}")
+            logger.info("Starting gRPC server on %s", listen_addr)
             await grpc_server.start()
+            logger.info("gRPC server started")
 
             async with anyio.create_task_group() as tg:
                 tg.start_soon(grpc_server.wait_for_termination)
                 async for message in session.incoming_messages:
                     tg.start_soon(
-                        lowlevel._handle_message,  # type: ignore[attr-defined]
+                        lowlevel._handle_message,  # type: ignore[attr-defined]  # pylint: disable=protected-access
                         message,
                         session,
                         lifespan_context,

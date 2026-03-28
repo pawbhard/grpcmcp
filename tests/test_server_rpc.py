@@ -1,13 +1,17 @@
+# pylint: disable=protected-access,unnecessary-dunder-call
 import asyncio
 import unittest
 
 import anyio
 import grpc
+from google.protobuf.struct_pb2 import Struct  # pylint: disable=no-name-in-module
 from mcp.server.mcpserver.server import MCPServer
 from mcp.server.session import ServerSession
+from mcp_transport_proto import (
+    mcp_messages_pb2,  # pylint: disable=no-member
+    mcp_pb2_grpc,
+)
 
-from mcp_transport_proto import mcp_messages_pb2 as mcp_pb2
-from mcp_transport_proto import mcp_pb2_grpc
 from grpcmcp.server import GRPCDispatcher
 
 
@@ -67,12 +71,12 @@ class TestServerRPC(unittest.IsolatedAsyncioTestCase):
         self._dispatch_task.cancel()
         try:
             await self._dispatch_task
-        except (asyncio.CancelledError, Exception):
+        except asyncio.CancelledError:
             pass
         await self._session.__aexit__(None, None, None)
 
     async def test_list_tools(self):
-        request = mcp_pb2.ListToolsRequest()
+        request = mcp_messages_pb2.ListToolsRequest()
         response = await self.stub.ListTools(request)
 
         self.assertEqual(len(response.tools), 2)
@@ -94,12 +98,13 @@ class TestServerRPC(unittest.IsolatedAsyncioTestCase):
         self.assertIn("result", add_tool.output_schema["properties"])
 
     async def test_call_tool(self):
-        args = mcp_pb2.CallToolRequest.Request()
-        args_struct = __import__("google.protobuf.struct_pb2", fromlist=["Struct"]).Struct()
+        args_struct = Struct()
         args_struct.update({"message": "World"})
 
-        request = mcp_pb2.CallToolRequest(
-            request=mcp_pb2.CallToolRequest.Request(name="echo", arguments=args_struct)
+        request = mcp_messages_pb2.CallToolRequest(
+            request=mcp_messages_pb2.CallToolRequest.Request(
+                name="echo", arguments=args_struct
+            )
         )
         response = await self.stub.CallTool(request)
 
@@ -109,12 +114,11 @@ class TestServerRPC(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(found_content, "Did not find expected response 'Hello World'")
 
     async def test_call_tool_structured(self):
-        from google.protobuf.struct_pb2 import Struct
         args = Struct()
         args.update({"a": 10, "b": 20})
 
-        request = mcp_pb2.CallToolRequest(
-            request=mcp_pb2.CallToolRequest.Request(name="add", arguments=args)
+        request = mcp_messages_pb2.CallToolRequest(
+            request=mcp_messages_pb2.CallToolRequest.Request(name="add", arguments=args)
         )
         response = await self.stub.CallTool(request)
 

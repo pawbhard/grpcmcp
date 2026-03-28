@@ -5,15 +5,16 @@
 >
 > This package is a Proof of Concept for experimentation purposes. It is not intended for production use.
 
-This module provides a gRPC transport implementation for the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) using a custom `GRPCDispatcher` that integrates with MCP's `ServerSession` machinery. Proto definitions are sourced from [mcp-grpc-transport-proto](https://github.com/GoogleCloudPlatform/mcp-grpc-transport-proto).
+This module provides a gRPC transport implementation for the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) using `GRPCDispatcher` and `GRPCClientDispatcher` — both integrate with MCP's session machinery via the `Dispatcher` protocol. Proto definitions are sourced from [mcp-grpc-transport-proto](https://github.com/GoogleCloudPlatform/mcp-grpc-transport-proto).
 
 ## Features
 
 - Tool listing and calling over gRPC
-- Full MCP session integration via `GRPCDispatcher` — tools that use `ctx: Context` receive a real request context
+- Full MCP session integration — tools that use `ctx: Context` receive a real request context
+- Client-side dispatcher (`GRPCClientDispatcher`) composable with `ClientSession`
 - Optional gRPC server reflection for use with tools like `grpcurl`
 
-## Usage
+## Server usage
 
 ```python
 import asyncio
@@ -36,10 +37,41 @@ Enable server reflection (useful for `grpcurl` and other tooling):
 asyncio.run(serve_grpc(mcp, enable_reflection=True))
 ```
 
-Run the example server:
+`serve_grpc` signature:
+
+```python
+async def serve_grpc(
+    server: MCPServer,
+    host: str = "0.0.0.0",
+    port: int = 50051,
+    enable_reflection: bool = False,
+) -> None: ...
+```
+
+## Client usage
+
+```python
+import asyncio
+from mcp.client.session import ClientSession
+from grpcmcp import GRPCClientDispatcher
+
+async def main():
+    dispatcher = GRPCClientDispatcher("localhost", 50051)
+    async with ClientSession(None, None, dispatcher=dispatcher) as session:
+        tools = await session.list_tools()
+        result = await session.call_tool("my_tool", {"x": 1})
+
+asyncio.run(main())
+```
+
+## Running the examples
 
 ```bash
+# Terminal 1 — start the server
 uv run example/grpc_example_server.py
+
+# Terminal 2 — run the client
+uv run example/grpc_example_client.py
 ```
 
 See [example/README.md](example/README.md) for testing with `grpcurl`.
