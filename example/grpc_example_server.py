@@ -1,10 +1,11 @@
 import asyncio
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver.context import Context
+from mcp.server.mcpserver.server import MCPServer
 
 from grpcmcp import serve_grpc
 
-mcp = FastMCP("gRPC Example Server")
+mcp = MCPServer("gRPC Example Server")
 
 @mcp.tool()
 async def slow_count(n: int, ctx: Context) -> str:
@@ -16,7 +17,7 @@ async def slow_count(n: int, ctx: Context) -> str:
 
 if __name__ == "__main__":
     try:
-        asyncio.run(serve_grpc(mcp))
+        asyncio.run(serve_grpc(mcp, enable_reflection=True))
     except Exception as e:
         import traceback
         traceback.print_exc()

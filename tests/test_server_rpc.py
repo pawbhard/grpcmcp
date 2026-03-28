@@ -1,19 +1,20 @@
 import asyncio
 import unittest
 
+import anyio
 import grpc
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver.server import MCPServer
+from mcp.server.session import ServerSession
 
-from grpcmcp.proto import mcp_messages_pb2 as mcp_pb2, mcp_pb2_grpc
-from grpcmcp.server import MCPServicer
+from mcp_transport_proto import mcp_messages_pb2 as mcp_pb2
+from mcp_transport_proto import mcp_pb2_grpc
+from grpcmcp.server import GRPCDispatcher
 
 
 class TestServerRPC(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        # Create a FastMCP Server instance
-        self.mcp_server = FastMCP("TestServer")
-        
-        # Register tools
+        self.mcp_server = MCPServer("TestServer")
+
         @self.mcp_server.tool(name="add")
         def add(a: int, b: int) -> int:
             """Add two numbers"""
@@ -24,94 +25,105 @@ class TestServerRPC(unittest.IsolatedAsyncioTestCase):
             """Echo back a message"""
             return "Hello " + message
 
+        lowlevel = self.mcp_server._lowlevel_server  # type: ignore[attr-defined]
+        self.dispatcher = GRPCDispatcher()
+        init_options = lowlevel.create_initialization_options()
 
-        # Create the servicer
-        self.servicer = MCPServicer(self.mcp_server)
-        
+        # Enter the session so set_handlers is called and the dispatcher is ready.
+        self._session = ServerSession(
+            None,  # type: ignore[arg-type]
+            None,  # type: ignore[arg-type]
+            init_options,
+            stateless=True,
+            dispatcher=self.dispatcher,
+        )
+        await self._session.__aenter__()
+
+        # Run the message dispatch loop in a background asyncio task.
+        async def _dispatch_loop() -> None:
+            async with anyio.create_task_group() as tg:
+                async for message in self._session.incoming_messages:
+                    tg.start_soon(
+                        lowlevel._handle_message,  # type: ignore[attr-defined]
+                        message,
+                        self._session,
+                        {},
+                        False,
+                    )
+
+        self._dispatch_task = asyncio.create_task(_dispatch_loop())
+
         self.server = grpc.aio.server()
-        mcp_pb2_grpc.add_McpServicer_to_server(self.servicer, self.server)
-        port = self.server.add_insecure_port('localhost:0')
+        mcp_pb2_grpc.add_McpServicer_to_server(self.dispatcher, self.server)
+        port = self.server.add_insecure_port("localhost:0")
         await self.server.start()
-        
-        self.channel = grpc.aio.insecure_channel(f'localhost:{port}')
+
+        self.channel = grpc.aio.insecure_channel(f"localhost:{port}")
         self.stub = mcp_pb2_grpc.McpStub(self.channel)
 
     async def asyncTearDown(self):
         await self.channel.close()
         await self.server.stop(None)
+        self._dispatch_task.cancel()
+        try:
+            await self._dispatch_task
+        except (asyncio.CancelledError, Exception):
+            pass
+        await self._session.__aexit__(None, None, None)
 
     async def test_list_tools(self):
         request = mcp_pb2.ListToolsRequest()
         response = await self.stub.ListTools(request)
-        
+
         self.assertEqual(len(response.tools), 2)
         tool_names = [t.name for t in response.tools]
         self.assertIn("add", tool_names)
         self.assertIn("echo", tool_names)
-        
-        # Verify schema for add
+
         add_tool = next(t for t in response.tools if t.name == "add")
         self.assertEqual(add_tool.description, "Add two numbers")
         self.assertIn("properties", add_tool.input_schema)
         self.assertIn("a", add_tool.input_schema["properties"])
         self.assertIn("b", add_tool.input_schema["properties"])
-        
-        # FastMCP might not set output_schema by default for simple types
-        # so we skip strict output_schema checks unless we define Pydantic models
-        # Verify outputSchema
+
         self.assertTrue(
             add_tool.HasField("output_schema"),
-            "output_schema should be present"
+            "output_schema should be present",
         )
         self.assertIn("properties", add_tool.output_schema)
         self.assertIn("result", add_tool.output_schema["properties"])
 
     async def test_call_tool(self):
-        from google.protobuf.struct_pb2 import Struct
-        args = Struct()
-        args.update({"message": "World"})
-        
+        args = mcp_pb2.CallToolRequest.Request()
+        args_struct = __import__("google.protobuf.struct_pb2", fromlist=["Struct"]).Struct()
+        args_struct.update({"message": "World"})
+
         request = mcp_pb2.CallToolRequest(
-            request=mcp_pb2.CallToolRequest.Request(
-                name="echo",
-                arguments=args
-            )
+            request=mcp_pb2.CallToolRequest.Request(name="echo", arguments=args_struct)
         )
-        
-        # CallTool returns a stream
         response = await self.stub.CallTool(request)
-        
-        found_content = False
-        if response.content:
-            for content in response.content:
-                if content.text.text == "Hello World":
-                    found_content = True
-        
+
+        found_content = any(
+            c.text.text == "Hello World" for c in response.content
+        )
         self.assertTrue(found_content, "Did not find expected response 'Hello World'")
 
     async def test_call_tool_structured(self):
         from google.protobuf.struct_pb2 import Struct
         args = Struct()
         args.update({"a": 10, "b": 20})
-        
+
         request = mcp_pb2.CallToolRequest(
-            request=mcp_pb2.CallToolRequest.Request(
-                name="add",
-                arguments=args
-            )
+            request=mcp_pb2.CallToolRequest.Request(name="add", arguments=args)
         )
-        
         response = await self.stub.CallTool(request)
-        
-        # Check structured_content
-        found_result = False
-        if response.HasField("structured_content"):
-            # FastMCP returns {'result': 30} for add(10, 20)
-            if response.structured_content["result"] == 30:
-                found_result = True
-        
-        self.assertTrue(found_result, "Did not find expected structured result 30")
+
+        self.assertTrue(
+            response.HasField("structured_content"),
+            "structured_content should be present",
+        )
+        self.assertEqual(response.structured_content["result"], 30)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()
