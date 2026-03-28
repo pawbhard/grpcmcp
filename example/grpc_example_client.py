@@ -6,6 +6,7 @@ Run the example server first:
 Then run this client:
     uv run example/grpc_example_client.py
 """
+
 import asyncio
 
 from mcp.client.session import ClientSession

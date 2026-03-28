@@ -108,9 +108,7 @@ class TestServerRPC(unittest.IsolatedAsyncioTestCase):
         )
         response = await self.stub.CallTool(request)
 
-        found_content = any(
-            c.text.text == "Hello World" for c in response.content
-        )
+        found_content = any(c.text.text == "Hello World" for c in response.content)
         self.assertTrue(found_content, "Did not find expected response 'Hello World'")
 
     async def test_call_tool_structured(self):

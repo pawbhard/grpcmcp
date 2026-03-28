@@ -20,7 +20,6 @@ from mcp_transport_proto import (
     mcp_pb2_grpc,
 )
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -95,7 +94,10 @@ class GRPCDispatcher(mcp_pb2_grpc.McpServicer):
         future: asyncio.Future[dict[str, Any] | ErrorData] = loop.create_future()
         self._pending[request_id] = future
         payload = {
-            "jsonrpc": "2.0", "id": request_id, "method": method, "params": params
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+            "params": params,
         }
         await self._on_request(request_id, payload, None)
         try:
@@ -156,30 +158,40 @@ class GRPCDispatcher(mcp_pb2_grpc.McpServicer):
             proto_contents = []
             for content in call_result.content:
                 if isinstance(content, types.TextContent):
-                    proto_contents.append(mcp_messages_pb2.CallToolResponse.Content(
-                        text=mcp_messages_pb2.TextContent(text=content.text)
-                    ))
+                    proto_contents.append(
+                        mcp_messages_pb2.CallToolResponse.Content(
+                            text=mcp_messages_pb2.TextContent(text=content.text)
+                        )
+                    )
                 elif isinstance(content, types.ImageContent):
-                    proto_contents.append(mcp_messages_pb2.CallToolResponse.Content(
-                        image=mcp_messages_pb2.ImageContent(
-                            data=content.data,
-                            mime_type=content.mimeType,
+                    proto_contents.append(
+                        mcp_messages_pb2.CallToolResponse.Content(
+                            image=mcp_messages_pb2.ImageContent(
+                                data=content.data,
+                                mime_type=content.mimeType,
+                            )
                         )
-                    ))
+                    )
                 elif isinstance(content, types.AudioContent):
-                    proto_contents.append(mcp_messages_pb2.CallToolResponse.Content(
-                        audio=mcp_messages_pb2.AudioContent(
-                            data=content.data,
-                            mime_type=content.mimeType,
+                    proto_contents.append(
+                        mcp_messages_pb2.CallToolResponse.Content(
+                            audio=mcp_messages_pb2.AudioContent(
+                                data=content.data,
+                                mime_type=content.mimeType,
+                            )
                         )
-                    ))
+                    )
 
             structured_content = None
             if call_result.structured_content:
                 structured_content = Struct()
                 ParseDict(call_result.structured_content, structured_content)
 
-            logger.info("CallTool %r completed is_error=%s", tool_name, call_result.is_error or False)
+            logger.info(
+                "CallTool %r completed is_error=%s",
+                tool_name,
+                call_result.is_error or False,
+            )
             return mcp_messages_pb2.CallToolResponse(
                 content=proto_contents,
                 structured_content=structured_content,
@@ -189,9 +201,11 @@ class GRPCDispatcher(mcp_pb2_grpc.McpServicer):
             logger.error("CallTool %r raised %s: %s", tool_name, type(e).__name__, e)
             traceback.print_exc()
             return mcp_messages_pb2.CallToolResponse(
-                content=[mcp_messages_pb2.CallToolResponse.Content(
-                    text=mcp_messages_pb2.TextContent(text=str(e))
-                )],
+                content=[
+                    mcp_messages_pb2.CallToolResponse.Content(
+                        text=mcp_messages_pb2.TextContent(text=str(e))
+                    )
+                ],
                 is_error=True,
             )
 
@@ -219,9 +233,7 @@ async def serve_grpc(
             grpc_server = grpc.aio.server()
             mcp_pb2_grpc.add_McpServicer_to_server(dispatcher, grpc_server)
             if enable_reflection:
-                service_name = (
-                    mcp_pb2.DESCRIPTOR.services_by_name["Mcp"].full_name
-                )
+                service_name = mcp_pb2.DESCRIPTOR.services_by_name["Mcp"].full_name
                 reflection.enable_server_reflection(
                     [service_name, reflection.SERVICE_NAME], grpc_server
                 )

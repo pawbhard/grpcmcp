@@ -1,4 +1,5 @@
 """Unit tests for GRPCClientDispatcher against a fake in-process gRPC servicer."""
+
 # pylint: disable=unnecessary-dunder-call
 import unittest
 
@@ -19,17 +20,21 @@ class FakeMcpServicer(mcp_pb2_grpc.McpServicer):
 
     async def ListTools(self, _request, _context):  # pylint: disable=invalid-overridden-method
         input_schema = Struct()
-        input_schema.update({
-            "type": "object",
-            "properties": {"x": {"type": "integer"}},
-        })
-        return mcp_messages_pb2.ListToolsResponse(tools=[
-            mcp_messages_pb2.Tool(
-                name="fake_tool",
-                description="A fake tool",
-                input_schema=input_schema,
-            )
-        ])
+        input_schema.update(
+            {
+                "type": "object",
+                "properties": {"x": {"type": "integer"}},
+            }
+        )
+        return mcp_messages_pb2.ListToolsResponse(
+            tools=[
+                mcp_messages_pb2.Tool(
+                    name="fake_tool",
+                    description="A fake tool",
+                    input_schema=input_schema,
+                )
+            ]
+        )
 
     async def CallTool(self, request, _context):  # pylint: disable=invalid-overridden-method
         tool_name = request.request.name

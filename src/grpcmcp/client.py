@@ -15,7 +15,6 @@ from mcp_transport_proto import (
     mcp_pb2_grpc,
 )
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -139,7 +138,9 @@ class GRPCClientDispatcher:
         args_struct = Struct()
         ParseDict(arguments, args_struct)
 
-        inner = mcp_messages_pb2.CallToolRequest.Request(name=name, arguments=args_struct)
+        inner = mcp_messages_pb2.CallToolRequest.Request(
+            name=name, arguments=args_struct
+        )
         grpc_request = mcp_messages_pb2.CallToolRequest(request=inner)
         response = await self._stub.CallTool(  # type: ignore[union-attr]
             grpc_request, timeout=timeout
@@ -150,17 +151,21 @@ class GRPCClientDispatcher:
             if c.HasField("text"):
                 content.append({"type": "text", "text": c.text.text})
             elif c.HasField("image"):
-                content.append({
-                    "type": "image",
-                    "data": c.image.data.decode(),
-                    "mimeType": c.image.mime_type,
-                })
+                content.append(
+                    {
+                        "type": "image",
+                        "data": c.image.data.decode(),
+                        "mimeType": c.image.mime_type,
+                    }
+                )
             elif c.HasField("audio"):
-                content.append({
-                    "type": "audio",
-                    "data": c.audio.data.decode(),
-                    "mimeType": c.audio.mime_type,
-                })
+                content.append(
+                    {
+                        "type": "audio",
+                        "data": c.audio.data.decode(),
+                        "mimeType": c.audio.mime_type,
+                    }
+                )
 
         result: dict[str, Any] = {"content": content, "isError": response.is_error}
         if response.HasField("structured_content"):
