@@ -1,3 +1,12 @@
+"""Tool example — gRPC MCP server exposing a slow_count tool with progress.
+
+Run this server:
+    uv run example/tools/server.py
+
+Then run the matching client:
+    uv run example/tools/client.py
+"""
+
 import asyncio
 
 from mcp.server.mcpserver.context import Context

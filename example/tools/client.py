@@ -1,10 +1,10 @@
-"""Example MCP client using GRPCClientDispatcher.
+"""Tool example — gRPC MCP client that lists and calls tools.
 
-Run the example server first:
-    uv run example/grpc_example_server.py
+Run the server first:
+    uv run example/tools/server.py
 
 Then run this client:
-    uv run example/grpc_example_client.py
+    uv run example/tools/client.py
 """
 
 import asyncio

@@ -9,7 +9,7 @@ import grpc
 from mcp.client.session import ClientSession
 from mcp.server.mcpserver.server import MCPServer
 from mcp.server.session import ServerSession
-from mcp.types import TextContent
+from mcp.types import Completion, PromptReference, TextContent
 from mcp_transport_proto import mcp_pb2_grpc  # pylint: disable=no-member
 
 from grpcmcp.client import GRPCClientDispatcher
@@ -46,6 +46,37 @@ class TestE2E(unittest.IsolatedAsyncioTestCase):
         def sum_two(a: int, b: int) -> int:
             """Add two numbers."""
             return a + b
+
+        # --- Resources ---
+        @self.mcp_server.resource(
+            "test://hello",
+            name="hello",
+            description="A hello resource",
+            mime_type="text/plain",
+        )
+        def hello_resource() -> str:
+            return "hello world"
+
+        @self.mcp_server.resource(
+            "test://greet/{name}",
+            name="greet_template",
+            description="Greet by name",
+        )
+        def greet_resource(name: str) -> str:
+            return f"Hello, {name}!"
+
+        # --- Prompts ---
+        @self.mcp_server.prompt(name="greet", description="Greet someone")
+        def greet_prompt(name: str) -> str:
+            return f"Hello, {name}!"
+
+        # --- Completion ---
+        @self.mcp_server.completion()
+        async def complete(ref, argument, context):  # type: ignore[no-untyped-def]
+            if isinstance(ref, PromptReference) and ref.name == "greet":
+                if argument.name == "name":
+                    return Completion(values=["Alice", "Bob", "World"])
+            return Completion(values=[])
 
         lowlevel = self.mcp_server._lowlevel_server  # type: ignore[attr-defined]
         self.server_dispatcher = GRPCDispatcher()
@@ -166,6 +197,52 @@ class TestE2E(unittest.IsolatedAsyncioTestCase):
             any("validation error" in t.lower() for t in texts),
             f"Expected validation error in content, got: {texts}",
         )
+
+    # --- Resources ---
+
+    async def test_list_resources(self):
+        result = await self._client_session.list_resources()
+        uris = [r.uri for r in result.resources]
+        self.assertIn("test://hello", uris)
+
+    async def test_read_resource(self):
+        from mcp.types import TextResourceContents
+
+        result = await self._client_session.read_resource("test://hello")  # type: ignore[arg-type]
+        self.assertEqual(len(result.contents), 1)
+        self.assertIsInstance(result.contents[0], TextResourceContents)
+        self.assertEqual(result.contents[0].text, "hello world")
+
+    async def test_list_resource_templates(self):
+        result = await self._client_session.list_resource_templates()
+        names = [t.name for t in result.resource_templates]
+        self.assertIn("greet_template", names)
+
+    # --- Prompts ---
+
+    async def test_list_prompts(self):
+        result = await self._client_session.list_prompts()
+        names = [p.name for p in result.prompts]
+        self.assertIn("greet", names)
+        greet = next(p for p in result.prompts if p.name == "greet")
+        self.assertEqual(greet.description, "Greet someone")
+        self.assertTrue(any(a.name == "name" for a in (greet.arguments or [])))
+
+    async def test_get_prompt(self):
+        result = await self._client_session.get_prompt("greet", {"name": "World"})
+        self.assertEqual(len(result.messages), 1)
+        self.assertEqual(result.messages[0].role, "user")
+        self.assertIsInstance(result.messages[0].content, TextContent)
+        self.assertEqual(result.messages[0].content.text, "Hello, World!")  # type: ignore[union-attr]
+
+    # --- Completion ---
+
+    async def test_complete(self):
+        result = await self._client_session.complete(
+            ref={"type": "ref/prompt", "name": "greet"},  # type: ignore[arg-type]
+            argument={"name": "name", "value": "Al"},  # type: ignore[arg-type]
+        )
+        self.assertIn("Alice", result.completion.values)
 
 
 if __name__ == "__main__":

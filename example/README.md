@@ -1,85 +1,54 @@
-# gRPC MCP Example
+# gRPC MCP Examples
 
-This example runs an MCP server over gRPC with server reflection enabled, and a matching client.
+Each subdirectory is a self-contained example with a `server.py` and a `client.py`.
 
-## Start the server
+| Example | What it demonstrates |
+|---------|----------------------|
+| `tools/` | Tool calls with progress reporting (`slow_count`) |
+| `resources/` | Static resources and URI-template resources (notes store) |
+| `prompts/` | Prompts with arguments and argument completion |
 
-```bash
-uv run example/grpc_example_server.py
-```
+## Running an example
 
-The server starts on `0.0.0.0:50051` and exposes one tool: `slow_count`.
-
-## Run the client
-
-In a second terminal:
+Start the server in one terminal, then run the client in another.
 
 ```bash
-uv run example/grpc_example_client.py
+# tools
+uv run example/tools/server.py
+uv run example/tools/client.py
+
+# resources
+uv run example/resources/server.py
+uv run example/resources/client.py
+
+# prompts
+uv run example/prompts/server.py
+uv run example/prompts/client.py
 ```
 
-Expected output:
-
-```
-Available tools (1):
-  - slow_count: Counts to n slowly, reporting progress.
-
-Calling tool 'slow_count' with n=3 ...
-is_error: False
-Result: Finished counting to 3
-Structured: {'result': 'Finished counting to 3'}
-```
+All servers start on `localhost:50051` with gRPC reflection enabled.
 
 ## Test with grpcurl
 
 Install [grpcurl](https://github.com/fullstorydev/grpcurl/releases) if you don't have it.
 
-### List available services
-
 ```bash
+# list services
 grpcurl -plaintext localhost:50051 list
-```
 
-Expected output:
-```
-grpc.reflection.v1alpha.ServerReflection
-model_context_protocol.Mcp
-```
-
-### Describe the service
-
-```bash
-grpcurl -plaintext localhost:50051 describe model_context_protocol.Mcp
-```
-
-### List tools
-
-```bash
+# list tools
 grpcurl -plaintext localhost:50051 model_context_protocol.Mcp/ListTools
-```
 
-### Call a tool
-
-```bash
+# call a tool
 grpcurl -plaintext \
   -d '{"request": {"name": "slow_count", "arguments": {"n": 3}}}' \
   localhost:50051 model_context_protocol.Mcp/CallTool
-```
 
-Expected output:
-```json
-{
-  "content": [
-    {
-      "text": {
-        "text": "Finished counting to 3"
-      }
-    }
-  ],
-  "structuredContent": {
-    "result": "Finished counting to 3"
-  }
-}
+# list resources
+grpcurl -plaintext localhost:50051 model_context_protocol.Mcp/ListResources
+
+# list prompts
+grpcurl -plaintext localhost:50051 model_context_protocol.Mcp/ListPrompts
 ```
 
 ## Server reflection
@@ -90,4 +59,6 @@ Reflection is opt-in. Enable it by passing `enable_reflection=True` to `serve_gr
 asyncio.run(serve_grpc(mcp, enable_reflection=True))
 ```
 
-The example server has reflection enabled by default. When reflection is disabled, `grpcurl` requires proto files to be passed explicitly — these can be obtained from [mcp-grpc-transport-proto](https://github.com/GoogleCloudPlatform/mcp-grpc-transport-proto).
+All example servers have reflection enabled. When reflection is disabled, `grpcurl`
+requires proto files passed explicitly — obtainable from
+[mcp-grpc-transport-proto](https://github.com/GoogleCloudPlatform/mcp-grpc-transport-proto).

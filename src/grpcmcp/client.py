@@ -15,6 +15,8 @@ from mcp_transport_proto import (
     mcp_pb2_grpc,
 )
 
+from grpcmcp import proto_util
+
 logger = logging.getLogger(__name__)
 
 
@@ -82,6 +84,18 @@ class GRPCClientDispatcher:
             return await self._list_tools(params, timeout)
         if method == "tools/call":
             return await self._call_tool(params, timeout)
+        if method == "resources/list":
+            return await self._list_resources(params, timeout)
+        if method == "resources/read":
+            return await self._read_resource(params, timeout)
+        if method == "resources/templates/list":
+            return await self._list_resource_templates(params, timeout)
+        if method == "prompts/list":
+            return await self._list_prompts(params, timeout)
+        if method == "prompts/get":
+            return await self._get_prompt(params, timeout)
+        if method == "completion/complete":
+            return await self._complete(params, timeout)
         raise MCPError(
             code=types.METHOD_NOT_FOUND,
             message=f"gRPC transport does not support method {method!r}",
@@ -113,21 +127,7 @@ class GRPCClientDispatcher:
             mcp_messages_pb2.ListToolsRequest(), timeout=timeout
         )
         logger.info("ListTools response received: %d tool(s)", len(response.tools))
-
-        tools = []
-        for t in response.tools:
-            tool: dict[str, Any] = {
-                "name": t.name,
-                "description": t.description or "",
-                "inputSchema": MessageToDict(t.input_schema),
-            }
-            if t.title:
-                tool["title"] = t.title
-            if t.HasField("output_schema"):
-                tool["outputSchema"] = MessageToDict(t.output_schema)
-            tools.append(tool)
-
-        return {"tools": tools}
+        return {"tools": [proto_util.proto_tool_to_dict(t) for t in response.tools]}
 
     async def _call_tool(
         self, params: dict[str, Any], timeout: float | None
@@ -146,29 +146,137 @@ class GRPCClientDispatcher:
             grpc_request, timeout=timeout
         )
 
-        content = []
-        for c in response.content:
-            if c.HasField("text"):
-                content.append({"type": "text", "text": c.text.text})
-            elif c.HasField("image"):
-                content.append(
-                    {
-                        "type": "image",
-                        "data": c.image.data.decode(),
-                        "mimeType": c.image.mime_type,
-                    }
-                )
-            elif c.HasField("audio"):
-                content.append(
-                    {
-                        "type": "audio",
-                        "data": c.audio.data.decode(),
-                        "mimeType": c.audio.mime_type,
-                    }
-                )
+        content = [
+            d
+            for c in response.content
+            if (d := proto_util.proto_call_content_to_dict(c)) is not None
+        ]
 
         result: dict[str, Any] = {"content": content, "isError": response.is_error}
         if response.HasField("structured_content"):
             result["structuredContent"] = MessageToDict(response.structured_content)
         logger.info("CallTool %r completed is_error=%s", name, response.is_error)
         return result
+
+    async def _list_resources(
+        self, params: dict[str, Any], timeout: float | None
+    ) -> dict[str, Any]:
+        logger.info("Sending ListResources request")
+        response = await self._stub.ListResources(  # type: ignore[union-attr]
+            mcp_messages_pb2.ListResourcesRequest(), timeout=timeout
+        )
+        logger.info(
+            "ListResources response received: %d resource(s)", len(response.resources)
+        )
+        return {
+            "resources": [
+                proto_util.proto_resource_to_dict(r) for r in response.resources
+            ]
+        }
+
+    async def _read_resource(
+        self, params: dict[str, Any], timeout: float | None
+    ) -> dict[str, Any]:
+        uri = params["uri"]
+        logger.info("Sending ReadResource request: uri=%r", uri)
+        response = await self._stub.ReadResource(  # type: ignore[union-attr]
+            mcp_messages_pb2.ReadResourceRequest(uri=uri), timeout=timeout
+        )
+        logger.info(
+            "ReadResource response received: %d content(s)", len(response.resource)
+        )
+        contents = [
+            d
+            for c in response.resource
+            if (d := proto_util.proto_resource_contents_to_dict(c)) is not None
+        ]
+        return {"contents": contents}
+
+    async def _list_resource_templates(
+        self, params: dict[str, Any], timeout: float | None
+    ) -> dict[str, Any]:
+        logger.info("Sending ListResourceTemplates request")
+        response = await self._stub.ListResourceTemplates(  # type: ignore[union-attr]
+            mcp_messages_pb2.ListResourceTemplatesRequest(), timeout=timeout
+        )
+        logger.info(
+            "ListResourceTemplates response received: %d template(s)",
+            len(response.resource_templates),
+        )
+        return {
+            "resourceTemplates": [
+                proto_util.proto_resource_template_to_dict(t)
+                for t in response.resource_templates
+            ]
+        }
+
+    async def _list_prompts(
+        self, params: dict[str, Any], timeout: float | None
+    ) -> dict[str, Any]:
+        logger.info("Sending ListPrompts request")
+        response = await self._stub.ListPrompts(  # type: ignore[union-attr]
+            mcp_messages_pb2.ListPromptsRequest(), timeout=timeout
+        )
+        logger.info(
+            "ListPrompts response received: %d prompt(s)", len(response.prompts)
+        )
+        return {
+            "prompts": [proto_util.proto_prompt_to_dict(p) for p in response.prompts]
+        }
+
+    async def _get_prompt(
+        self, params: dict[str, Any], timeout: float | None
+    ) -> dict[str, Any]:
+        name = params["name"]
+        arguments = params.get("arguments") or {}
+        logger.info("Sending GetPrompt request: name=%r arguments=%r", name, arguments)
+        grpc_request = mcp_messages_pb2.GetPromptRequest(name=name)
+        grpc_request.arguments.update(arguments)
+        response = await self._stub.GetPrompt(  # type: ignore[union-attr]
+            grpc_request, timeout=timeout
+        )
+        logger.info(
+            "GetPrompt %r response received: %d message(s)",
+            name,
+            len(response.messages),
+        )
+        messages = [
+            d
+            for msg in response.messages
+            if (d := proto_util.proto_prompt_message_to_dict(msg)) is not None
+        ]
+        result: dict[str, Any] = {"messages": messages}
+        if response.description:
+            result["description"] = response.description
+        return result
+
+    async def _complete(
+        self, params: dict[str, Any], timeout: float | None
+    ) -> dict[str, Any]:
+        logger.info("Sending Complete request")
+        ref = params["ref"]
+        argument = params["argument"]
+        grpc_argument = mcp_messages_pb2.CompletionRequest.Argument(
+            name=argument["name"], value=argument["value"]
+        )
+        if ref.get("type") == "ref/prompt":
+            grpc_request = mcp_messages_pb2.CompletionRequest(
+                prompt_reference=mcp_messages_pb2.PromptReference(name=ref["name"]),
+                argument=grpc_argument,
+            )
+        else:
+            grpc_request = mcp_messages_pb2.CompletionRequest(
+                resource_reference=mcp_messages_pb2.ResourceReference(uri=ref["uri"]),
+                argument=grpc_argument,
+            )
+        response = await self._stub.Complete(  # type: ignore[union-attr]
+            grpc_request, timeout=timeout
+        )
+        logger.info("Complete response received: %d value(s)", len(response.values))
+        return {
+            "completion": {
+                "values": list(response.values),
+                "total": response.total_matches,
+                "hasMore": response.has_more,
+            }
+        }

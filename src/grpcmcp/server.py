@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import traceback
 from typing import Any
 
 import anyio
@@ -19,6 +18,8 @@ from mcp_transport_proto import (
     mcp_pb2,
     mcp_pb2_grpc,
 )
+
+from grpcmcp import proto_util
 
 logger = logging.getLogger(__name__)
 
@@ -116,33 +117,11 @@ class GRPCDispatcher(mcp_pb2_grpc.McpServicer):
         try:
             result_dict = await self._dispatch("tools/list", {})
             list_result = types.ListToolsResult.model_validate(result_dict)
-
-            proto_tools = []
-            for tool in list_result.tools:
-                input_schema = Struct()
-                if tool.input_schema:
-                    ParseDict(tool.input_schema, input_schema)
-
-                output_schema = None
-                if tool.output_schema:
-                    output_schema = Struct()
-                    ParseDict(tool.output_schema, output_schema)
-
-                tool_kwargs: dict[str, Any] = {
-                    "name": tool.name,
-                    "title": tool.title or "",
-                    "description": tool.description or "",
-                    "input_schema": input_schema,
-                }
-                if output_schema:
-                    tool_kwargs["output_schema"] = output_schema
-
-                proto_tools.append(mcp_messages_pb2.Tool(**tool_kwargs))
-
+            proto_tools = [proto_util.tool_to_proto(t) for t in list_result.tools]
             logger.info("ListTools returning %d tool(s)", len(proto_tools))
             return mcp_messages_pb2.ListToolsResponse(tools=proto_tools)
         except Exception:  # pylint: disable=broad-exception-caught
-            traceback.print_exc()
+            logger.exception("ListTools failed")
             raise
 
     async def CallTool(self, request, _context):  # pylint: disable=invalid-overridden-method
@@ -155,32 +134,11 @@ class GRPCDispatcher(mcp_pb2_grpc.McpServicer):
             )
             call_result = types.CallToolResult.model_validate(result_dict)
 
-            proto_contents = []
-            for content in call_result.content:
-                if isinstance(content, types.TextContent):
-                    proto_contents.append(
-                        mcp_messages_pb2.CallToolResponse.Content(
-                            text=mcp_messages_pb2.TextContent(text=content.text)
-                        )
-                    )
-                elif isinstance(content, types.ImageContent):
-                    proto_contents.append(
-                        mcp_messages_pb2.CallToolResponse.Content(
-                            image=mcp_messages_pb2.ImageContent(
-                                data=content.data,
-                                mime_type=content.mimeType,
-                            )
-                        )
-                    )
-                elif isinstance(content, types.AudioContent):
-                    proto_contents.append(
-                        mcp_messages_pb2.CallToolResponse.Content(
-                            audio=mcp_messages_pb2.AudioContent(
-                                data=content.data,
-                                mime_type=content.mimeType,
-                            )
-                        )
-                    )
+            proto_contents = [
+                p
+                for c in call_result.content
+                if (p := proto_util.call_content_to_proto(c)) is not None
+            ]
 
             structured_content = None
             if call_result.structured_content:
@@ -198,8 +156,7 @@ class GRPCDispatcher(mcp_pb2_grpc.McpServicer):
                 is_error=call_result.is_error or False,
             )
         except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.error("CallTool %r raised %s: %s", tool_name, type(e).__name__, e)
-            traceback.print_exc()
+            logger.exception("CallTool %r failed", tool_name)
             return mcp_messages_pb2.CallToolResponse(
                 content=[
                     mcp_messages_pb2.CallToolResponse.Content(
@@ -208,6 +165,131 @@ class GRPCDispatcher(mcp_pb2_grpc.McpServicer):
                 ],
                 is_error=True,
             )
+
+    async def ListResources(self, request, _context):  # pylint: disable=invalid-overridden-method
+        logger.info("ListResources request received")
+        try:
+            result_dict = await self._dispatch("resources/list", {})
+            list_result = types.ListResourcesResult.model_validate(result_dict)
+            proto_resources = [
+                proto_util.resource_to_proto(r) for r in list_result.resources
+            ]
+            logger.info("ListResources returning %d resource(s)", len(proto_resources))
+            return mcp_messages_pb2.ListResourcesResponse(resources=proto_resources)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("ListResources failed")
+            raise
+
+    async def ReadResource(self, request, _context):  # pylint: disable=invalid-overridden-method
+        uri = request.uri
+        logger.info("ReadResource request: uri=%r", uri)
+        try:
+            result_dict = await self._dispatch("resources/read", {"uri": uri})
+            read_result = types.ReadResourceResult.model_validate(result_dict)
+            proto_contents = [
+                p
+                for c in read_result.contents
+                if (p := proto_util.resource_contents_to_proto(c)) is not None
+            ]
+            logger.info(
+                "ReadResource %r returning %d content(s)", uri, len(proto_contents)
+            )
+            return mcp_messages_pb2.ReadResourceResponse(resource=proto_contents)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("ReadResource %r failed", uri)
+            raise
+
+    async def ListResourceTemplates(self, request, _context):  # pylint: disable=invalid-overridden-method
+        logger.info("ListResourceTemplates request received")
+        try:
+            result_dict = await self._dispatch("resources/templates/list", {})
+            list_result = types.ListResourceTemplatesResult.model_validate(result_dict)
+            proto_templates = [
+                proto_util.resource_template_to_proto(t)
+                for t in list_result.resource_templates
+            ]
+            logger.info(
+                "ListResourceTemplates returning %d template(s)", len(proto_templates)
+            )
+            return mcp_messages_pb2.ListResourceTemplatesResponse(
+                resource_templates=proto_templates
+            )
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("ListResourceTemplates failed")
+            raise
+
+    async def ListPrompts(self, request, _context):  # pylint: disable=invalid-overridden-method
+        logger.info("ListPrompts request received")
+        try:
+            result_dict = await self._dispatch("prompts/list", {})
+            list_result = types.ListPromptsResult.model_validate(result_dict)
+            proto_prompts = [proto_util.prompt_to_proto(p) for p in list_result.prompts]
+            logger.info("ListPrompts returning %d prompt(s)", len(proto_prompts))
+            return mcp_messages_pb2.ListPromptsResponse(prompts=proto_prompts)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("ListPrompts failed")
+            raise
+
+    async def GetPrompt(self, request, _context):  # pylint: disable=invalid-overridden-method
+        name = request.name
+        arguments = dict(request.arguments)
+        logger.info("GetPrompt request: name=%r arguments=%r", name, arguments)
+        try:
+            result_dict = await self._dispatch(
+                "prompts/get", {"name": name, "arguments": arguments}
+            )
+            get_result = types.GetPromptResult.model_validate(result_dict)
+            proto_messages = [
+                p
+                for msg in get_result.messages
+                if (p := proto_util.prompt_message_to_proto(msg)) is not None
+            ]
+            logger.info(
+                "GetPrompt %r returning %d message(s)", name, len(proto_messages)
+            )
+            return mcp_messages_pb2.GetPromptResponse(
+                description=get_result.description or "",
+                messages=proto_messages,
+            )
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("GetPrompt %r failed", name)
+            raise
+
+    async def Complete(self, request, _context):  # pylint: disable=invalid-overridden-method
+        logger.info("Complete request received")
+        try:
+            if request.HasField("prompt_reference"):
+                ref: dict[str, Any] = {
+                    "type": "ref/prompt",
+                    "name": request.prompt_reference.name,
+                }
+            else:
+                ref = {
+                    "type": "ref/resource",
+                    "uri": request.resource_reference.uri,
+                }
+            params: dict[str, Any] = {
+                "ref": ref,
+                "argument": {
+                    "name": request.argument.name,
+                    "value": request.argument.value,
+                },
+            }
+            if request.HasField("context") and request.context.arguments:
+                params["context"] = {"arguments": dict(request.context.arguments)}
+
+            result_dict = await self._dispatch("completion/complete", params)
+            complete_result = types.CompleteResult.model_validate(result_dict)
+            completion = complete_result.completion
+            logger.info("Complete returning %d value(s)", len(completion.values))
+            return mcp_messages_pb2.CompletionResponse(
+                values=completion.values,
+                total_matches=completion.total or 0,
+                has_more=completion.has_more or False,
+            )
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("Complete failed")
+            raise
 
 
 async def serve_grpc(
