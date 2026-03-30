@@ -4,7 +4,7 @@ import unittest
 import grpc
 from mcp.server.fastmcp import Context, FastMCP
 
-from grpcmcp.proto import mcp_messages_pb2 as mcp_pb2, mcp_pb2_grpc
+from mcp_transport_proto import mcp_messages_pb2 as mcp_pb2, mcp_pb2_grpc
 from grpcmcp.server import MCPServicer
 
 
