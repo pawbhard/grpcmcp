@@ -4,10 +4,10 @@ version = "0.1.0"
 description = "gRPC transport for Model Context Protocol"
 license = { text = "MIT" }
 dependencies = [
-    "grpcio==1.76.0",
+    "grpcio>=1.78.0",
     "protobuf>=4.25.0",
     "mcp==1.25.0",
-    "grpcio-tools>=1.76.0",
+    "mcp-transport-proto",
     "types-protobuf>=6.32.1.20251210",
     "pydantic>=2.12.5",
 ]
@@ -15,8 +15,11 @@ requires-python = ">=3.10"
 
 
 [build-system]
-requires = ["setuptools>=61.0", "grpcio-tools>=1.60.0"]
+requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.uv.sources]
+mcp-transport-proto = { git = "https://github.com/GoogleCloudPlatform/mcp-grpc-transport-proto.git" }
 
 [tool.ruff]
 line-length = 88
