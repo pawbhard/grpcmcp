@@ -16,8 +16,11 @@ from mcp_transport_proto import (
 from grpcmcp.server import GRPCDispatcher
 
 
-class TestServerRPC(unittest.IsolatedAsyncioTestCase):
-    async def asyncSetUp(self):
+import pytest
+
+class TestServerRPC:
+    @pytest.fixture(autouse=True)
+    async def setup_server(self):
         self.mcp_server = MCPServer("TestServer")
 
         # --- Tools ---
@@ -56,19 +59,19 @@ class TestServerRPC(unittest.IsolatedAsyncioTestCase):
 
         # --- Completion ---
         @self.mcp_server.completion()
-        async def complete(ref, argument, context):  # type: ignore[no-untyped-def]
+        async def complete(ref, argument, context):
             if isinstance(ref, PromptReference) and ref.name == "greet":
                 if argument.name == "name":
                     return Completion(values=["Alice", "Bob"])
             return Completion(values=[])
 
-        lowlevel = self.mcp_server._lowlevel_server  # type: ignore[attr-defined]
+        lowlevel = self.mcp_server._lowlevel_server
         self.dispatcher = GRPCDispatcher()
         init_options = lowlevel.create_initialization_options()
 
         self._session = ServerSession(
-            None,  # type: ignore[arg-type]
-            None,  # type: ignore[arg-type]
+            None,
+            None,
             init_options,
             stateless=True,
             dispatcher=self.dispatcher,
@@ -79,7 +82,7 @@ class TestServerRPC(unittest.IsolatedAsyncioTestCase):
             async with anyio.create_task_group() as tg:
                 async for message in self._session.incoming_messages:
                     tg.start_soon(
-                        lowlevel._handle_message,  # type: ignore[attr-defined]
+                        lowlevel._handle_message,
                         message,
                         self._session,
                         {},
@@ -96,15 +99,17 @@ class TestServerRPC(unittest.IsolatedAsyncioTestCase):
         self.channel = grpc.aio.insecure_channel(f"localhost:{port}")
         self.stub = mcp_pb2_grpc.McpStub(self.channel)
 
-    async def asyncTearDown(self):
-        await self.channel.close()
-        await self.server.stop(None)
-        self._dispatch_task.cancel()
         try:
-            await self._dispatch_task
-        except asyncio.CancelledError:
-            pass
-        await self._session.__aexit__(None, None, None)
+            yield
+        finally:
+            await self.channel.close()
+            await self.server.stop(None)
+            self._dispatch_task.cancel()
+            try:
+                await self._dispatch_task
+            except asyncio.CancelledError:
+                pass
+            await self._session.__aexit__(None, None, None)
 
     # --- Tools ---
 

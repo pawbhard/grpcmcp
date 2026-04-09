@@ -71,7 +71,7 @@ class GRPCClientDispatcher:
 
     async def send_request(
         self,
-        request_id: RequestId,  # pylint: disable=unused-argument
+        request_id: RequestId | None,  # pylint: disable=unused-argument
         request: dict[str, Any],
         metadata: Any = None,  # pylint: disable=unused-argument
         timeout: float | None = None,
@@ -107,15 +107,6 @@ class GRPCClientDispatcher:
         related_request_id: RequestId | None = None,
     ) -> None:
         pass  # No persistent gRPC stream for client-initiated notifications
-
-    async def send_response(
-        self,
-        request_id: RequestId,
-        response: dict[str, Any] | ErrorData,
-    ) -> None:
-        raise NotImplementedError(
-            "GRPCClientDispatcher does not handle server-initiated requests"
-        )
 
     # --- gRPC call handlers ---
 
