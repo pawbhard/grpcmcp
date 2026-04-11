@@ -7,7 +7,7 @@ import grpc
 from google.protobuf.json_format import MessageToDict, ParseDict
 from google.protobuf.struct_pb2 import Struct  # pylint: disable=no-name-in-module
 from mcp import types
-from mcp.shared.dispatcher import OnErrorFn, OnNotificationFn, OnRequestFn
+from mcp.shared.dispatcher import OnErrorFn, OnNotificationFn, OnRequestFn, ReplyHandle
 from mcp.shared.exceptions import MCPError
 from mcp.types import ErrorData, RequestId
 from mcp_transport_proto import (
@@ -71,7 +71,6 @@ class GRPCClientDispatcher:
 
     async def send_request(
         self,
-        request_id: RequestId,  # pylint: disable=unused-argument
         request: dict[str, Any],
         metadata: Any = None,  # pylint: disable=unused-argument
         timeout: float | None = None,
@@ -104,13 +103,13 @@ class GRPCClientDispatcher:
     async def send_notification(
         self,
         notification: dict[str, Any],
-        related_request_id: RequestId | None = None,
+        related_reply_handle: ReplyHandle | None = None,
     ) -> None:
         pass  # No persistent gRPC stream for client-initiated notifications
 
     async def send_response(
         self,
-        request_id: RequestId,
+        handle: ReplyHandle,
         response: dict[str, Any] | ErrorData,
     ) -> None:
         raise NotImplementedError(

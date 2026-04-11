@@ -10,7 +10,7 @@ from grpc_reflection.v1alpha import reflection
 from mcp import types
 from mcp.server.mcpserver.server import MCPServer
 from mcp.server.session import ServerSession
-from mcp.shared.dispatcher import OnErrorFn, OnNotificationFn, OnRequestFn
+from mcp.shared.dispatcher import OnErrorFn, OnNotificationFn, OnRequestFn, ReplyHandle
 from mcp.shared.exceptions import MCPError
 from mcp.types import ErrorData, RequestId
 from mcp_transport_proto import (
@@ -36,7 +36,6 @@ class GRPCDispatcher(mcp_pb2_grpc.McpServicer):
         self._on_request: OnRequestFn | None = None
         self._on_notification: OnNotificationFn | None = None
         self._on_error: OnErrorFn | None = None
-        self._pending: dict[RequestId, asyncio.Future[dict[str, Any] | ErrorData]] = {}
         self._counter = 0
 
     # --- Dispatcher protocol ---
@@ -57,7 +56,6 @@ class GRPCDispatcher(mcp_pb2_grpc.McpServicer):
 
     async def send_request(
         self,
-        request_id: RequestId,
         request: dict[str, Any],
         metadata: Any = None,
         timeout: float | None = None,
@@ -69,17 +67,17 @@ class GRPCDispatcher(mcp_pb2_grpc.McpServicer):
     async def send_notification(
         self,
         notification: dict[str, Any],
-        related_request_id: RequestId | None = None,
+        related_reply_handle: ReplyHandle | None = None,
     ) -> None:
         pass  # No persistent gRPC stream for server-push notifications
 
     async def send_response(
         self,
-        request_id: RequestId,
+        handle: ReplyHandle,
         response: dict[str, Any] | ErrorData,
     ) -> None:
-        future = self._pending.pop(request_id, None)
-        if future and not future.done():
+        future: asyncio.Future[dict[str, Any] | ErrorData] = handle
+        if not future.done():
             future.set_result(response)
 
     # --- Internal routing ---
@@ -93,18 +91,16 @@ class GRPCDispatcher(mcp_pb2_grpc.McpServicer):
         request_id = self._counter
         loop = asyncio.get_running_loop()
         future: asyncio.Future[dict[str, Any] | ErrorData] = loop.create_future()
-        self._pending[request_id] = future
         payload = {
             "jsonrpc": "2.0",
             "id": request_id,
             "method": method,
             "params": params,
         }
-        await self._on_request(request_id, payload, None)
+        await self._on_request(request_id, future, payload, None)
         try:
             result = await future
         except asyncio.CancelledError:
-            self._pending.pop(request_id, None)
             raise
         if isinstance(result, ErrorData):
             raise MCPError(result.code, result.message, result.data)

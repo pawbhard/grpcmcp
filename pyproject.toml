@@ -32,7 +32,7 @@ venv = ".venv"
 include = ["src", "tests", "example"]
 
 [tool.uv.sources]
-mcp = { git = "https://github.com/pawbhard/python-sdk.git", branch = "extract-dispatcher-from-base-session" }
+mcp = { git = "https://github.com/pawbhard/python-sdk.git", branch = "dispatcher_fix" }
 mcp-transport-proto = { git = "https://github.com/GoogleCloudPlatform/mcp-grpc-transport-proto.git" }
 
 [dependency-groups]
